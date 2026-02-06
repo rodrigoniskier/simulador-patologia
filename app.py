@@ -1,238 +1,310 @@
-import streamlit as st
+# app.py
+import io
+from datetime import datetime
+
 import cv2
 import numpy as np
 from PIL import Image
 from fpdf import FPDF
-import io
-import tempfile
-import random
-import os
+import streamlit as st
 
-# --- CONFIGURAÇÃO DA PÁGINA ---
-st.set_page_config(page_title="SimuPath AI - Prof. Rodrigo Niskier", layout="wide", page_icon="🔬")
 
-# --- COPYRIGHT E CABEÇALHO ---
-st.sidebar.markdown("---")
-st.sidebar.caption("Desenvolvido para fins educativos")
-st.sidebar.markdown("**© 2026 Prof. Rodrigo Niskier**")
+# ---------------------- CONFIGURAÇÃO DA PÁGINA ----------------------
+st.set_page_config(
+    page_title="Simulador de Patologia Digital",
+    page_icon="🧫",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
 
-# Título Principal
-st.title("🔬 SimuPath AI: Workstation de Patologia Digital")
-st.markdown("""
-**Simulação de Ambiente de Diagnóstico Assistido por Computador (CAD)**
-Este sistema simula a triagem de lâminas histológicas utilizando algoritmos de Deep Learning para deteção de padrões suspeitos.
-""")
 
-# --- FUNÇÕES AUXILIARES ---
-
-def gerar_metadados():
-    """Gera dados fictícios de um paciente."""
-    return {
-        "Nome": "Maria Silva",
-        "ID_Caso": f"SP-{random.randint(20000, 99999)}-26",
-        "Data_Nasc": "1980-05-20",
-        "Origem": "Hospital Central - Oncologia",
-        "Stain": "H&E (Hematoxilina e Eosina)"
+# ---------------------- ESTILOS GERAIS ----------------------
+CUSTOM_CSS = """
+<style>
+    /* Deixa fundo mais clean e cartões com visual de dashboard */
+    .main {
+        background-color: #0f172a;
+        color: #e5e7eb;
     }
+    section[data-testid="stSidebar"] {
+        background-color: #020617;
+    }
+    .metric-card {
+        padding: 1rem 1.25rem;
+        border-radius: 0.75rem;
+        background: linear-gradient(135deg, #1e293b, #0f172a);
+        border: 1px solid #334155;
+        box-shadow: 0 18px 45px rgba(15, 23, 42, 0.75);
+    }
+    .metric-label {
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #9ca3af;
+    }
+    .metric-value {
+        font-size: 1.4rem;
+        font-weight: 600;
+        color: #e5e7eb;
+    }
+    .metric-sub {
+        font-size: 0.75rem;
+        color: #9ca3af;
+    }
+    .stTabs [data-baseweb="tab-list"] {
+        gap: 0.5rem;
+        border-bottom: 1px solid #1f2937;
+    }
+    .stTabs [data-baseweb="tab"] {
+        background-color: #020617;
+        padding: 0.5rem 1rem;
+        border-radius: 999px;
+        color: #9ca3af;
+    }
+    .stTabs [aria-selected="true"] {
+        background: linear-gradient(135deg, #6366f1, #22c55e);
+        color: #f9fafb !important;
+    }
+    .annotation-box {
+        border-radius: 0.75rem;
+        border: 1px solid #334155;
+        padding: 0.75rem;
+        background: rgba(15, 23, 42, 0.9);
+    }
+</style>
+"""
+st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
-def aplicar_heatmap(img_array):
-    """
-    Simula um mapa de atenção (Heatmap) comum em IA médica.
-    Na realidade, isto viria de uma rede neural. Aqui simulamos usando processamento de imagem
-    para destacar áreas de alta densidade celular (núcleos).
-    """
-    # Converter para cinza
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-    # Inverter (núcleos são escuros, queremos que fiquem claros para o heatmap)
-    inv_gray = cv2.bitwise_not(gray)
-    # Aplicar mapa de cores (JET é comum em medicina para mostrar 'intensidade')
-    heatmap = cv2.applyColorMap(inv_gray, cv2.COLORMAP_JET)
-    # Misturar imagem original com heatmap
-    overlay = cv2.addWeighted(img_array, 0.6, heatmap, 0.4, 0)
-    return overlay
 
-def criar_pdf(imagem_pil, metadados, texto_laudo, score_ia):
-    """Gera um PDF com o laudo médico simulado."""
-    pdf = FPDF()
+# ---------------------- FUNÇÕES AUXILIARES ----------------------
+@st.cache_data
+def read_image(file) -> np.ndarray:
+    """Lê uma imagem enviada pelo usuário e retorna em formato OpenCV (BGR)."""
+    bytes_data = file.read()
+    image = Image.open(io.BytesIO(bytes_data)).convert("RGB")
+    img_array = np.array(image)
+    img_bgr = cv2.cvtColor(img_array, cv2.COLOR_RGB2BGR)
+    return img_bgr
+
+
+def apply_zoom(image: np.ndarray, zoom: float) -> np.ndarray:
+    """Aplica zoom simples (crop central) simulando aproximação do campo."""
+    if zoom == 1.0:
+        return image
+    h, w, _ = image.shape
+    center_x, center_y = w // 2, h // 2
+    new_w, new_h = int(w / zoom), int(h / zoom)
+    x1 = max(center_x - new_w // 2, 0)
+    y1 = max(center_y - new_h // 2, 0)
+    x2 = min(center_x + new_w // 2, w)
+    y2 = min(center_y + new_h // 2, h)
+    cropped = image[y1:y2, x1:x2]
+    resized = cv2.resize(cropped, (w, h), interpolation=cv2.INTER_CUBIC)
+    return resized
+
+
+def draw_grid(image: np.ndarray, grid_size: int = 5, color=(0, 255, 0)) -> np.ndarray:
+    """Desenha uma grade sobre a imagem para treino de navegação/contagem."""
+    img = image.copy()
+    h, w, _ = img.shape
+    step_x = w // grid_size
+    step_y = h // grid_size
+
+    for i in range(1, grid_size):
+        # linhas verticais
+        cv2.line(img, (i * step_x, 0), (i * step_x, h), color, 1)
+        # linhas horizontais
+        cv2.line(img, (0, i * step_y), (w, i * step_y), color, 1)
+
+    return img
+
+
+def to_pil(image_bgr: np.ndarray) -> Image.Image:
+    return Image.fromarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
+
+
+def generate_pdf_report(
+    pil_image: Image.Image,
+    student_name: str,
+    case_id: str,
+    comments: str,
+) -> bytes:
+    """Gera um PDF simples com a lâmina e o relatório do aluno."""
+    pdf = FPDF(orientation="P", unit="mm", format="A4")
+    pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
-    pdf.set_font("Arial", size=12)
 
     # Cabeçalho
-    pdf.set_font("Arial", 'B', 16)
-    pdf.cell(200, 10, txt="Relatório de Análise Patológica Digital", ln=True, align='C')
-    pdf.set_font("Arial", size=10)
-    pdf.cell(200, 10, txt="SimuPath AI - Educational Suite | © 2026 Prof. Rodrigo Niskier", ln=True, align='C')
-    pdf.line(10, 30, 200, 30)
-    pdf.ln(10)
+    pdf.set_font("Arial", "B", 14)
+    pdf.cell(0, 10, "Simulador de Patologia Digital", ln=True, align="C")
 
-    # Dados do Paciente
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Identificação do Caso", ln=True, align='L')
-    pdf.set_font("Arial", size=11)
-    for key, value in metadados.items():
-        pdf.cell(200, 8, txt=f"{key}: {value}", ln=True)
-    pdf.ln(5)
+    pdf.set_font("Arial", "", 11)
+    pdf.ln(4)
+    pdf.cell(0, 8, f"Aluno: {student_name}", ln=True)
+    pdf.cell(0, 8, f"Caso: {case_id}", ln=True)
+    pdf.cell(0, 8, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
 
-    # Imagem
-    # Salvar imagem temporariamente para inserir no PDF
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
-        imagem_pil.save(tmp_file.name)
-        pdf.image(tmp_file.name, x=10, y=None, w=100)
-        os.unlink(tmp_file.name) # Limpar temp
+    # Salvar imagem temporariamente em memória
+    img_buffer = io.BytesIO()
+    pil_image.save(img_buffer, format="PNG")
+    img_buffer.seek(0)
 
-    pdf.ln(5)
+    # Salvar em arquivo temporário para o FPDF (FPDF não aceita BytesIO diretamente)
+    temp_path = "temp_slide.png"
+    with open(temp_path, "wb") as f:
+        f.write(img_buffer.read())
 
-    # Análise de IA
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Análise Computacional (IA Preliminar)", ln=True, align='L')
-    pdf.set_font("Arial", size=11)
-    pdf.cell(200, 8, txt=f"Score de Risco de Malignidade: {score_ia}", ln=True)
-    pdf.cell(200, 8, txt="Obs: A IA serve apenas como suporte à triagem.", ln=True)
-    pdf.ln(5)
+    # Inserir imagem centralizada
+    pdf.ln(4)
+    x = 10
+    max_width = 190  # A4 width - 2*10mm
+    pdf.image(temp_path, x=x, w=max_width)
 
-    # Laudo Médico (Texto do aluno)
-    pdf.set_font("Arial", 'B', 12)
-    pdf.cell(200, 10, txt="Laudo Macroscópico e Microscópico (Médico Residente)", ln=True, align='L')
-    pdf.set_font("Arial", size=11)
-    pdf.multi_cell(0, 8, txt=texto_laudo)
-    
-    pdf.ln(20)
-    pdf.cell(200, 10, txt="_______________________________________", ln=True, align='C')
-    pdf.cell(200, 5, txt="Assinatura Digital do Patologista", ln=True, align='C')
+    # Comentários do aluno
+    pdf.ln(8)
+    pdf.set_font("Arial", "B", 12)
+    pdf.cell(0, 8, "Raciocínio diagnóstico / observações:", ln=True)
+    pdf.set_font("Arial", "", 11)
+    pdf.multi_cell(0, 6, comments or "(sem comentários)")
 
-    return pdf.output(dest='S').encode('latin-1')
+    # Exporta para bytes
+    pdf_bytes = pdf.output(dest="S").encode("latin1")
+    return pdf_bytes
 
-# --- ESTADO DA SESSÃO ---
-if 'metadados' not in st.session_state:
-    st.session_state['metadados'] = gerar_metadados()
-if 'anonimizado' not in st.session_state:
-    st.session_state['anonimizado'] = False
 
-# --- BARRA LATERAL ---
-st.sidebar.header("📁 Gestão de Casos")
-uploaded_file = st.sidebar.file_uploader("Importar Lâmina Digital (WSI)", type=["jpg", "png", "jpeg"])
+# ---------------------- LAYOUT PRINCIPAL ----------------------
+st.title("🧫 Simulador de Análise Patológica")
+st.markdown(
+    "Simulador interativo de **patologia** digital para treinamento de alunos em leitura de lâminas e letramento digital."
+)
 
-# --- LÓGICA PRINCIPAL ---
+with st.sidebar:
+    st.header("Configurações")
+    student_name = st.text_input("Nome do aluno", placeholder="Digite seu nome")
+    case_id = st.text_input("Identificação do caso", placeholder="Ex.: Caso 01 - Necrose")
 
-if uploaded_file is not None:
-    image = Image.open(uploaded_file)
-    img_array = np.array(image)
-    
-    # Tabs para organizar o fluxo de trabalho profissional
-    tab1, tab2, tab3 = st.tabs(["🖥️ Visualização & Metadados", "🤖 Análise de IA", "📝 Laudo & Relatório"])
-
-    # --- ABA 1: VISUALIZAÇÃO ---
-    with tab1:
-        col1, col2 = st.columns([2, 1])
-        with col1:
-            st.image(image, caption="Whole-Slide Image (Vista Original)", use_container_width=True)
-        with col2:
-            st.subheader("Dados DICOM")
-            if not st.session_state['anonimizado']:
-                st.error("⚠️ Identificadores Visíveis (PHI)")
-                st.json(st.session_state['metadados'])
-                if st.button("🛡️ Desidentificar Dados"):
-                    st.session_state['metadados']['Nome'] = "ANONIMO"
-                    st.session_state['metadados']['ID_Caso'] = f"Anon-{random.randint(1000,9999)}"
-                    st.session_state['metadados']['Data_Nasc'] = "****-**-**"
-                    st.session_state['anonimizado'] = True
-                    st.rerun()
-            else:
-                st.success("✅ Dados Anonimizados")
-                st.json(st.session_state['metadados'])
-            
-            st.info("Protocolo: Assegure-se de que os dados estão anonimizados antes de iniciar a análise de IA na nuvem.")
-
-    # --- ABA 2: ANÁLISE DE IA ---
-    with tab2:
-        st.subheader("Deep Learning / Pathomics")
-        
-        # QC Automático
-        gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
-        score_foco = cv2.Laplacian(gray, cv2.CV_64F).var()
-        
-        col_qc1, col_qc2, col_qc3 = st.columns(3)
-        col_qc1.metric("Controlo de Qualidade (Foco)", f"{score_foco:.1f}")
-        
-        # Simulação de Score de Malignidade (Aleatório ponderado para fins educativos)
-        # Numa app real, isto viria do modelo treinado
-        risco = random.randint(10, 95) if score_foco > 100 else 0
-        cor_risco = "normal" if risco < 50 else "off" # Streamlit usa "inverse" ou cores especificas para destacar
-        
-        if score_foco < 100:
-            st.error("⛔ Imagem com qualidade insuficiente para análise algorítmica.")
-        else:
-            col_qc2.success("QC Aprovado")
-            
-            if st.button("Executar Diagnóstico Assistido"):
-                with st.spinner('A processar Redes Neurais Convolucionais...'):
-                    # 1. Gerar Heatmap
-                    img_heatmap = aplicar_heatmap(img_array)
-                    
-                    # 2. Segmentação simples (Threshold)
-                    gray_blur = cv2.GaussianBlur(gray, (7, 7), 0)
-                    thresh = cv2.adaptiveThreshold(gray_blur, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C,
-                                                 cv2.THRESH_BINARY_INV, 11, 2)
-                    contornos, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-                    n_celulas = len(contornos)
-                    
-                    # Exibir Resultados
-                    st.markdown("### Resultados da IA")
-                    c1, c2 = st.columns(2)
-                    
-                    with c1:
-                        st.image(img_heatmap, caption="Mapa de Atenção (Saliency Map)", use_container_width=True)
-                        st.caption("As áreas a vermelho/azul indicam regiões onde a IA detetou padrões de alta densidade celular ou atipia nuclear.")
-                    
-                    with c2:
-                        st.metric("Contagem Celular Estimada", n_celulas)
-                        st.markdown(f"**Score de Probabilidade de Malignidade:**")
-                        st.progress(risco)
-                        st.markdown(f"### {risco}%")
-                        
-                        if risco > 70:
-                            st.warning("⚠️ Classificação Sugerida: ALTO RISCO / SUSPEITO")
-                        else:
-                            st.success("✅ Classificação Sugerida: BAIXO RISCO / BENIGNO")
-
-                    st.toast("Análise concluída com sucesso!")
-
-    # --- ABA 3: LAUDO ---
-    with tab3:
-        st.subheader("Emissão de Relatório Médico")
-        st.markdown("Como patologista em treino, utilize os dados da IA e a sua observação para redigir o laudo.")
-        
-        texto_padrao = "Exame microscópico revela fragmentos de tecido com arquitetura preservada/alterada. Observa-se..."
-        laudo_texto = st.text_area("Descrição Macroscópica e Microscópica", height=150, value=texto_padrao)
-        
-        col_down1, col_down2 = st.columns([1, 1])
-        
-        with col_down1:
-            st.markdown("Ao confirmar, o laudo será assinado digitalmente e gerado em PDF.")
-            if st.button("Assinar e Gerar PDF"):
-                if not st.session_state['anonimizado']:
-                    st.error("Não é possível gerar o laudo com dados identificados. Por favor anonimize na primeira aba.")
-                else:
-                    # Gerar PDF
-                    pdf_bytes = criar_pdf(image, st.session_state['metadados'], laudo_texto, "Risco Calculado na Análise")
-                    
-                    st.success("📄 Relatório gerado com sucesso!")
-                    st.download_button(
-                        label="📥 Download Relatório Médico (PDF)",
-                        data=pdf_bytes,
-                        file_name=f"Laudo_{st.session_state['metadados']['ID_Caso']}.pdf",
-                        mime="application/pdf"
-                    )
-
-else:
-    # Ecrã de Boas-vindas
-    st.info("👋 Bem-vindo à Workstation SimuPath. Carregue uma lâmina digitalizada para começar.")
-    st.markdown("""
-    ### Guia Rápido:
-    1. **Upload:** Carregue uma imagem histológica (H&E).
-    2. **Privacidade:** Verifique e anonimize os dados do paciente.
-    3. **IA:** Use a aba de análise para ver o "Mapa de Calor" e a estimativa de risco.
-    4. **Laudo:** Escreva a sua conclusão e baixe o PDF oficial assinado.
-    """)
     st.markdown("---")
-    st.caption("© 2026 Prof. Rodrigo Niskier | Ferramenta de Letramento Digital em Medicina")
+    zoom = st.slider("Zoom aproximado", min_value=1.0, max_value=4.0, value=1.5, step=0.25)
+    show_grid = st.checkbox("Mostrar grade de contagem", value=False)
+    grid_size = st.slider("Resolução da grade", 3, 10, 5)
+
+    st.markdown("---")
+    st.caption("Carregue uma lâmina digital (JPG, PNG ou TIFF).")
+    uploaded_file = st.file_uploader(
+        "Lâmina digital", type=["jpg", "jpeg", "png", "tiff"], accept_multiple_files=False
+    )
+
+# Métricas / cards superiores
+col_a, col_b, col_c = st.columns(3)
+with col_a:
+    st.markdown(
+        """
+        <div class="metric-card">
+            <div class="metric-label">Modo</div>
+            <div class="metric-value">Treino individual</div>
+            <div class="metric-sub">Exploração livre da lâmina</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with col_b:
+    st.markdown(
+        f"""
+        <div class="metric-card">
+            <div class="metric-label">Caso ativo</div>
+            <div class="metric-value">{case_id or "Não definido"}</div>
+            <div class="metric-sub">Defina um caso na barra lateral</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+with col_c:
+    st.markdown(
+        """
+        <div class="metric-card">
+            <div class="metric-label">Funcionalidades</div>
+            <div class="metric-value">Zoom + Grade</div>
+            <div class="metric-sub">PDF com registro do raciocínio</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
+st.markdown("")
+
+tab1, tab2 = st.tabs(["Visualização da lâmina", "Relatório do aluno"])
+
+# ---------------------- TAB 1: VISUALIZAÇÃO ----------------------
+with tab1:
+    if uploaded_file is None:
+        st.info("Carregue uma imagem de lâmina na barra lateral para iniciar o simulador.")
+    else:
+        # lê e processa
+        img_bgr = read_image(uploaded_file)
+        img_zoom = apply_zoom(img_bgr, zoom=zoom)
+        if show_grid:
+            img_zoom = draw_grid(img_zoom, grid_size=grid_size)
+
+        pil_to_show = to_pil(img_zoom)
+
+        # layout de duas colunas: imagem e painel de instruções
+        img_col, info_col = st.columns([3, 2])
+
+        with img_col:
+            st.subheader("Campo de visão")
+            st.image(pil_to_show, use_column_width=True)
+
+        with info_col:
+            st.subheader("Tarefas sugeridas")
+            st.markdown(
+                """
+                - Identifique regiões de interesse (inflamação, necrose, células atípicas).  
+                - Use o **zoom** para simular diferentes aumentos do microscópio.  
+                - Ative a **grade** para exercícios de contagem celular ou estimativa de proporções.  
+                """
+            )
+            st.markdown("### Observações rápidas")
+            quick_notes = st.text_area(
+                "Anote o que você está vendo (pontos‑chave morfológicos).",
+                height=160,
+                key="quick_notes",
+            )
+
+# ---------------------- TAB 2: RELATÓRIO + PDF ----------------------
+with tab2:
+    st.subheader("Raciocínio diagnóstico")
+    comments = st.text_area(
+        "Descreva seu raciocínio (padrões, diagnóstico diferencial, correlação clínico‑patológica).",
+        height=260,
+    )
+
+    col_left, col_right = st.columns([1, 1])
+    with col_left:
+        include_image = st.checkbox("Incluir captura da lâmina no PDF", value=True)
+    with col_right:
+        st.caption("O PDF pode ser usado para portfólio de aprendizagem ou avaliação formativa.")
+
+    if st.button("📄 Gerar PDF do caso", type="primary"):
+        if uploaded_file is None:
+            st.warning("Você precisa carregar uma lâmina antes de gerar o PDF.")
+        else:
+            img_bgr = read_image(uploaded_file)
+            img_zoom = apply_zoom(img_bgr, zoom=zoom)
+            if show_grid:
+                img_zoom = draw_grid(img_zoom, grid_size=grid_size)
+            pil_img = to_pil(img_zoom) if include_image else Image.new("RGB", (800, 600), "white")
+
+            pdf_bytes = generate_pdf_report(
+                pil_image=pil_img,
+                student_name=student_name or "Aluno não identificado",
+                case_id=case_id or "Caso sem identificação",
+                comments=comments or "",
+            )
+
+            st.success("PDF gerado com sucesso. Faça o download abaixo.")
+            st.download_button(
+                label="⬇️ Baixar relatório em PDF",
+                data=pdf_bytes,
+                file_name=f"relatorio_patologia_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                mime="application/pdf",
+            )
