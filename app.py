@@ -1,5 +1,6 @@
 # app.py
 import io
+import random
 from datetime import datetime
 
 import cv2
@@ -21,7 +22,6 @@ st.set_page_config(
 # ---------------------- ESTILOS GERAIS ----------------------
 CUSTOM_CSS = """
 <style>
-    /* Deixa fundo mais clean e cartões com visual de dashboard */
     .main {
         background-color: #0f172a;
         color: #e5e7eb;
@@ -65,18 +65,12 @@ CUSTOM_CSS = """
         background: linear-gradient(135deg, #6366f1, #22c55e);
         color: #f9fafb !important;
     }
-    .annotation-box {
-        border-radius: 0.75rem;
-        border: 1px solid #334155;
-        padding: 0.75rem;
-        background: rgba(15, 23, 42, 0.9);
-    }
 </style>
 """
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 
-# ---------------------- FUNÇÕES AUXILIARES ----------------------
+# ---------------------- FUNÇÕES AUXILIARES BÁSICAS ----------------------
 @st.cache_data
 def read_image(file) -> np.ndarray:
     """Lê uma imagem enviada pelo usuário e retorna em formato OpenCV (BGR)."""
@@ -88,7 +82,7 @@ def read_image(file) -> np.ndarray:
 
 
 def apply_zoom(image: np.ndarray, zoom: float) -> np.ndarray:
-    """Aplica zoom simples (crop central) simulando aproximação do campo."""
+    """Aplica zoom simples (crop central)."""
     if zoom == 1.0:
         return image
     h, w, _ = image.shape
@@ -111,9 +105,7 @@ def draw_grid(image: np.ndarray, grid_size: int = 5, color=(0, 255, 0)) -> np.nd
     step_y = h // grid_size
 
     for i in range(1, grid_size):
-        # linhas verticais
         cv2.line(img, (i * step_x, 0), (i * step_x, h), color, 1)
-        # linhas horizontais
         cv2.line(img, (0, i * step_y), (w, i * step_y), color, 1)
 
     return img
@@ -123,18 +115,139 @@ def to_pil(image_bgr: np.ndarray) -> Image.Image:
     return Image.fromarray(cv2.cvtColor(image_bgr, cv2.COLOR_BGR2RGB))
 
 
+# ---------------------- FUNÇÕES PEDAGÓGICAS ----------------------
+def deidentify_slide(image_bgr: np.ndarray, border_pct: float = 0.08) -> np.ndarray:
+    """
+    Desidentificação simples:
+    - aplica blur nas bordas (regiões onde labels impressas costumam aparecer);
+    - serve como reforço de boas práticas de anonimização.
+    [Região de borda inspirada em abordagens de pré-processamento em contagem de objetos.] [web:50][web:53]
+    """
+    img = image_bgr.copy()
+    h, w, _ = img.shape
+    b_w = int(w * border_pct)
+    b_h = int(h * border_pct)
+
+    # regiões de borda
+    top = img[0:b_h, :]
+    bottom = img[h - b_h : h, :]
+    left = img[:, 0:b_w]
+    right = img[:, w - b_w : w]
+
+    top_blur = cv2.GaussianBlur(top, (51, 51), 0)
+    bottom_blur = cv2.GaussianBlur(bottom, (51, 51), 0)
+    left_blur = cv2.GaussianBlur(left, (51, 51), 0)
+    right_blur = cv2.GaussianBlur(right, (51, 51), 0)
+
+    img[0:b_h, :] = top_blur
+    img[h - b_h : h, :] = bottom_blur
+    img[:, 0:b_w] = left_blur
+    img[:, w - b_w : w] = right_blur
+
+    return img
+
+
+def simple_cell_count(image_bgr: np.ndarray, min_area: int = 30, max_area: int = 5000):
+    """
+    Contagem simplificada de “células” por segmentação e contorno.
+    É um modelo didático, inspirado em tutoriais de contagem de objetos/células com OpenCV. [web:47][web:50][web:53]
+    """
+    # Converter para escala de cinza
+    gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
+    blur = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # Limiarização adaptativa ou Otsu
+    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Operações morfológicas para separar células
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
+    morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
+
+    # Encontrar contornos
+    contours, _ = cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    annotated = image_bgr.copy()
+    count = 0
+    for c in contours:
+        area = cv2.contourArea(c)
+        if min_area <= area <= max_area:
+            (x, y), radius = cv2.minEnclosingCircle(c)
+            center = (int(x), int(y))
+            radius = int(radius)
+            cv2.circle(annotated, center, radius, (0, 255, 0), 2)
+            count += 1
+
+    return annotated, count
+
+
+def simulate_ai_analysis(image_bgr: np.ndarray):
+    """
+    “Análise de IA” simulada para fins educacionais.
+    A ideia é aproximar a experiência de um app real de classificação de patologias, mas sem rodar um modelo de verdade. [web:41][web:45][web:54]
+    """
+    # semente semi-determinística baseada na média de pixels
+    mean_intensity = float(image_bgr.mean())
+    random.seed(int(mean_intensity))
+
+    labels = [
+        "Padrão inflamatório crônico",
+        "Padrão inflamatório agudo",
+        "Padrão neoplásico",
+        "Tecido essencialmente normal",
+        "Alterações degenerativas / regressivas",
+    ]
+    probs = np.abs(np.random.dirichlet(np.ones(len(labels))))
+    # ordena por probabilidade
+    order = np.argsort(probs)[::-1]
+    labels_sorted = [labels[i] for i in order]
+    probs_sorted = probs[order]
+
+    # gera um “laudo narrativo” curto
+    top_label = labels_sorted[0]
+    confidence = probs_sorted[0]
+
+    if "neoplásico" in top_label:
+        narrative = (
+            "O algoritmo sugere padrão neoplásico, priorizando a correlação com achados clínicos "
+            "e confirmação por imuno-histoquímica sempre que indicado."
+        )
+    elif "inflamatório crônico" in top_label:
+        narrative = (
+            "O algoritmo indica predomínio de inflamação crônica, com possível formação de "
+            "tecido de granulação ou fibrose residual."
+        )
+    elif "inflamatório agudo" in top_label:
+        narrative = (
+            "O algoritmo indica padrão inflamatório agudo, compatível com processo exsudativo "
+            "rico em neutrófilos."
+        )
+    elif "normal" in top_label:
+        narrative = (
+            "O algoritmo não identifica alterações significativas, reforçando a necessidade de "
+            "integrar o contexto clínico e outros exames."
+        )
+    else:
+        narrative = (
+            "O algoritmo sugere alterações degenerativas/regressivas, recomendando avaliação "
+            "complementar para definição etiológica."
+        )
+
+    return labels_sorted, probs_sorted, top_label, confidence, narrative
+
+
 def generate_pdf_report(
     pil_image: Image.Image,
     student_name: str,
     case_id: str,
     comments: str,
+    ai_summary: str | None = None,
+    cell_count: int | None = None,
 ) -> bytes:
     """Gera um PDF simples com a lâmina e o relatório do aluno."""
     pdf = FPDF(orientation="P", unit="mm", format="A4")
     pdf.set_auto_page_break(auto=True, margin=15)
     pdf.add_page()
 
-    # Cabeçalho
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Simulador de Patologia Digital", ln=True, align="C")
 
@@ -144,30 +257,40 @@ def generate_pdf_report(
     pdf.cell(0, 8, f"Caso: {case_id}", ln=True)
     pdf.cell(0, 8, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
 
-    # Salvar imagem temporariamente em memória
+    # Resumo de IA e contagem (se disponíveis)
+    pdf.ln(4)
+    if ai_summary:
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(0, 8, "Resumo da análise de IA (simulada):", ln=True)
+        pdf.set_font("Arial", "", 11)
+        pdf.multi_cell(0, 6, ai_summary)
+    if cell_count is not None:
+        pdf.ln(2)
+        pdf.set_font("Arial", "B", 11)
+        pdf.cell(0, 8, "Estimativa de contagem de células:", ln=True)
+        pdf.set_font("Arial", "", 11)
+        pdf.cell(0, 6, f"Total estimado: {cell_count}", ln=True)
+
+    # Imagem
     img_buffer = io.BytesIO()
     pil_image.save(img_buffer, format="PNG")
     img_buffer.seek(0)
-
-    # Salvar em arquivo temporário para o FPDF (FPDF não aceita BytesIO diretamente)
     temp_path = "temp_slide.png"
     with open(temp_path, "wb") as f:
         f.write(img_buffer.read())
 
-    # Inserir imagem centralizada
     pdf.ln(4)
     x = 10
-    max_width = 190  # A4 width - 2*10mm
+    max_width = 190
     pdf.image(temp_path, x=x, w=max_width)
 
     # Comentários do aluno
     pdf.ln(8)
     pdf.set_font("Arial", "B", 12)
-    pdf.cell(0, 8, "Raciocínio diagnóstico / observações:", ln=True)
+    pdf.cell(0, 8, "Raciocínio diagnóstico / observações do aluno:", ln=True)
     pdf.set_font("Arial", "", 11)
     pdf.multi_cell(0, 6, comments or "(sem comentários)")
 
-    # Exporta para bytes
     pdf_bytes = pdf.output(dest="S").encode("latin1")
     return pdf_bytes
 
@@ -175,18 +298,22 @@ def generate_pdf_report(
 # ---------------------- LAYOUT PRINCIPAL ----------------------
 st.title("🧫 Simulador de Análise Patológica")
 st.markdown(
-    "Simulador interativo de **patologia** digital para treinamento de alunos em leitura de lâminas e letramento digital."
+    "Simulador interativo de **patologia** digital para treinamento em leitura de lâminas, "
+    "contagem de células e letramento digital (incluindo IA simulada)."
 )
 
 with st.sidebar:
-    st.header("Configurações")
+    st.header("Configurações gerais")
     student_name = st.text_input("Nome do aluno", placeholder="Digite seu nome")
     case_id = st.text_input("Identificação do caso", placeholder="Ex.: Caso 01 - Necrose")
 
     st.markdown("---")
-    zoom = st.slider("Zoom aproximado", min_value=1.0, max_value=4.0, value=1.5, step=0.25)
+    zoom = st.slider("Zoom aproximado", 1.0, 4.0, 1.5, 0.25)
     show_grid = st.checkbox("Mostrar grade de contagem", value=False)
     grid_size = st.slider("Resolução da grade", 3, 10, 5)
+
+    st.markdown("---")
+    deidentify = st.checkbox("Aplicar desidentificação da lâmina (blur em bordas)", value=True)
 
     st.markdown("---")
     st.caption("Carregue uma lâmina digital (JPG, PNG ou TIFF).")
@@ -202,7 +329,7 @@ with col_a:
         <div class="metric-card">
             <div class="metric-label">Modo</div>
             <div class="metric-value">Treino individual</div>
-            <div class="metric-sub">Exploração livre da lâmina</div>
+            <div class="metric-sub">Exploração livre + tarefas guiadas</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -222,9 +349,9 @@ with col_c:
     st.markdown(
         """
         <div class="metric-card">
-            <div class="metric-label">Funcionalidades</div>
-            <div class="metric-value">Zoom + Grade</div>
-            <div class="metric-sub">PDF com registro do raciocínio</div>
+            <div class="metric-label">Ferramentas</div>
+            <div class="metric-value">Zoom · Contagem · IA</div>
+            <div class="metric-sub">Relatório em PDF para portfólio</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -232,79 +359,149 @@ with col_c:
 
 st.markdown("")
 
-tab1, tab2 = st.tabs(["Visualização da lâmina", "Relatório do aluno"])
+tab1, tab2, tab3 = st.tabs(
+    ["Visualização / navegação", "Contagem de células", "IA simulada + relatório"]
+)
+
+# Variáveis compartilhadas entre abas
+base_image_bgr = None
+processed_for_pdf = None
+ai_summary_for_pdf = None
+cell_count_for_pdf = None
+
+if uploaded_file is not None:
+    base_image_bgr = read_image(uploaded_file)
+    if deidentify:
+        base_image_bgr = deidentify_slide(base_image_bgr)
+
+    # imagem com zoom + grade para uso geral
+    zoomed = apply_zoom(base_image_bgr, zoom=zoom)
+    if show_grid:
+        zoomed = draw_grid(zoomed, grid_size=grid_size)
+    processed_for_pdf = zoomed.copy()
+else:
+    st.info("Carregue uma imagem de lâmina na barra lateral para iniciar o simulador.")
+
 
 # ---------------------- TAB 1: VISUALIZAÇÃO ----------------------
 with tab1:
-    if uploaded_file is None:
-        st.info("Carregue uma imagem de lâmina na barra lateral para iniciar o simulador.")
+    if base_image_bgr is None:
+        st.warning("Nenhuma lâmina carregada.")
     else:
-        # lê e processa
-        img_bgr = read_image(uploaded_file)
-        img_zoom = apply_zoom(img_bgr, zoom=zoom)
-        if show_grid:
-            img_zoom = draw_grid(img_zoom, grid_size=grid_size)
-
-        pil_to_show = to_pil(img_zoom)
-
-        # layout de duas colunas: imagem e painel de instruções
         img_col, info_col = st.columns([3, 2])
-
         with img_col:
             st.subheader("Campo de visão")
-            st.image(pil_to_show, use_column_width=True)
+            st.image(to_pil(zoomed), use_column_width=True)
+            if deidentify:
+                st.caption("Desidentificação automática ativa (blur em bordas da lâmina).")
 
         with info_col:
             st.subheader("Tarefas sugeridas")
             st.markdown(
                 """
-                - Identifique regiões de interesse (inflamação, necrose, células atípicas).  
+                - Identifique regiões de interesse (inflamação, necrose, atipias).  
                 - Use o **zoom** para simular diferentes aumentos do microscópio.  
-                - Ative a **grade** para exercícios de contagem celular ou estimativa de proporções.  
+                - Ative a **grade** para exercícios de contagem ou estimativa de proporções.  
                 """
             )
-            st.markdown("### Observações rápidas")
             quick_notes = st.text_area(
-                "Anote o que você está vendo (pontos‑chave morfológicos).",
+                "Observações rápidas (o que chama a sua atenção nesta lâmina?).",
                 height=160,
                 key="quick_notes",
             )
 
-# ---------------------- TAB 2: RELATÓRIO + PDF ----------------------
+
+# ---------------------- TAB 2: CONTAGEM DE CÉLULAS ----------------------
 with tab2:
-    st.subheader("Raciocínio diagnóstico")
-    comments = st.text_area(
-        "Descreva seu raciocínio (padrões, diagnóstico diferencial, correlação clínico‑patológica).",
-        height=260,
-    )
+    if base_image_bgr is None:
+        st.warning("Nenhuma lâmina carregada.")
+    else:
+        st.subheader("Estimativa automatizada de contagem de células (didático)")
+        st.caption(
+            "Este módulo usa visão computacional simples para estimar o número de ‘células’ na imagem. "
+            "Os resultados têm finalidade **pedagógica**, não diagnóstica."
+        )
 
-    col_left, col_right = st.columns([1, 1])
-    with col_left:
+        c1, c2 = st.columns(2)
+        with c1:
+            min_area = st.slider("Área mínima (pixels)", 10, 500, 30, 5)
+        with c2:
+            max_area = st.slider("Área máxima (pixels)", 500, 10000, 5000, 100)
+
+        annotated, count_cells = simple_cell_count(zoomed, min_area=min_area, max_area=max_area)
+        cell_count_for_pdf = int(count_cells)
+
+        img_col, info_col = st.columns([3, 2])
+        with img_col:
+            st.image(to_pil(annotated), caption=f"Células detectadas: {count_cells}", use_column_width=True)
+
+        with info_col:
+            st.markdown(
+                f"""
+                **Total estimado de ‘células’**: {count_cells}  
+
+                Sugestões de uso em sala de aula:  
+                - Comparar a contagem automática com a estimativa visual do aluno.  
+                - Discutir **fontes de erro** (células sobrepostas, artefatos, ruído de coloração).  
+                - Relacionar a contagem com índices morfométricos ou escores semi-quantitativos.  
+                """
+            )
+
+
+# ---------------------- TAB 3: IA SIMULADA + RELATÓRIO ----------------------
+with tab3:
+    if base_image_bgr is None:
+        st.warning("Nenhuma lâmina carregada.")
+    else:
+        st.subheader("Análise de IA (simulada) e relatório do aluno")
+
+        # IA simulada
+        labels_sorted, probs_sorted, top_label, confidence, narrative = simulate_ai_analysis(zoomed)
+        ai_summary_for_pdf = (
+            f"Classe mais provável: {top_label} (confiança aproximada: {confidence*100:.1f}%). "
+            f"Resumo: {narrative}"
+        )
+
+        st.markdown(
+            "> Esta IA é **simulada**, construída apenas para fins didáticos, sem uso real em diagnóstico."
+        )
+        st.markdown("### Saída simulada do modelo")
+        for label, prob in zip(labels_sorted, probs_sorted):
+            st.write(f"- {label}: {prob*100:.1f}%")
+
+        st.info(narrative)
+
+        st.markdown("---")
+        st.markdown("### Raciocínio diagnóstico do aluno")
+        comments = st.text_area(
+            "Descreva o que você concorda ou discorda da sugestão da IA, incluindo diagnóstico diferencial e correlação clínico-patológica.",
+            height=220,
+        )
+
         include_image = st.checkbox("Incluir captura da lâmina no PDF", value=True)
-    with col_right:
-        st.caption("O PDF pode ser usado para portfólio de aprendizagem ou avaliação formativa.")
+        include_ai = st.checkbox("Incluir resumo da IA simulada no PDF", value=True)
+        include_count = st.checkbox("Incluir contagem de células estimada no PDF", value=True)
 
-    if st.button("📄 Gerar PDF do caso", type="primary"):
-        if uploaded_file is None:
-            st.warning("Você precisa carregar uma lâmina antes de gerar o PDF.")
-        else:
-            img_bgr = read_image(uploaded_file)
-            img_zoom = apply_zoom(img_bgr, zoom=zoom)
-            if show_grid:
-                img_zoom = draw_grid(img_zoom, grid_size=grid_size)
-            pil_img = to_pil(img_zoom) if include_image else Image.new("RGB", (800, 600), "white")
+        if st.button("📄 Gerar PDF do caso", type="primary"):
+            if processed_for_pdf is None:
+                st.warning("Não foi possível gerar a imagem processada.")
+            else:
+                pil_img = to_pil(processed_for_pdf) if include_image else Image.new(
+                    "RGB", (800, 600), "white"
+                )
+                pdf_bytes = generate_pdf_report(
+                    pil_image=pil_img,
+                    student_name=student_name or "Aluno não identificado",
+                    case_id=case_id or "Caso sem identificação",
+                    comments=comments,
+                    ai_summary=ai_summary_for_pdf if include_ai else None,
+                    cell_count=cell_count_for_pdf if include_count else None,
+                )
 
-            pdf_bytes = generate_pdf_report(
-                pil_image=pil_img,
-                student_name=student_name or "Aluno não identificado",
-                case_id=case_id or "Caso sem identificação",
-                comments=comments or "",
-            )
-
-            st.success("PDF gerado com sucesso. Faça o download abaixo.")
-            st.download_button(
-                label="⬇️ Baixar relatório em PDF",
-                data=pdf_bytes,
-                file_name=f"relatorio_patologia_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
-                mime="application/pdf",
-            )
+                st.success("PDF gerado com sucesso. Faça o download abaixo.")
+                st.download_button(
+                    label="⬇️ Baixar relatório em PDF",
+                    data=pdf_bytes,
+                    file_name=f"relatorio_patologia_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
+                    mime="application/pdf",
+                )
