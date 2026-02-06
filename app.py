@@ -1,6 +1,7 @@
 # app.py
 import io
 import random
+import time
 from datetime import datetime
 
 import cv2
@@ -117,12 +118,7 @@ def to_pil(image_bgr: np.ndarray) -> Image.Image:
 
 # ---------------------- FUNÇÕES PEDAGÓGICAS ----------------------
 def deidentify_slide(image_bgr: np.ndarray, border_pct: float = 0.08) -> np.ndarray:
-    """
-    Desidentificação simples:
-    - aplica blur nas bordas (regiões onde labels impressas costumam aparecer);
-    - serve como reforço de boas práticas de anonimização.
-    [Região de borda inspirada em abordagens de pré-processamento em contagem de objetos.] [web:50][web:53]
-    """
+    """Desidentificação simples: blur nas bordas onde labels costumam aparecer."""
     img = image_bgr.copy()
     h, w, _ = img.shape
     b_w = int(w * border_pct)
@@ -148,22 +144,15 @@ def deidentify_slide(image_bgr: np.ndarray, border_pct: float = 0.08) -> np.ndar
 
 
 def simple_cell_count(image_bgr: np.ndarray, min_area: int = 30, max_area: int = 5000):
-    """
-    Contagem simplificada de “células” por segmentação e contorno.
-    É um modelo didático, inspirado em tutoriais de contagem de objetos/células com OpenCV. [web:47][web:50][web:53]
-    """
-    # Converter para escala de cinza
+    """Contagem simplificada de 'células' por segmentação e contorno."""
     gray = cv2.cvtColor(image_bgr, cv2.COLOR_BGR2GRAY)
     blur = cv2.GaussianBlur(gray, (5, 5), 0)
 
-    # Limiarização adaptativa ou Otsu
     _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
 
-    # Operações morfológicas para separar células
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (3, 3))
     morph = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel, iterations=2)
 
-    # Encontrar contornos
     contours, _ = cv2.findContours(morph, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
     annotated = image_bgr.copy()
@@ -181,11 +170,7 @@ def simple_cell_count(image_bgr: np.ndarray, min_area: int = 30, max_area: int =
 
 
 def simulate_ai_analysis(image_bgr: np.ndarray):
-    """
-    “Análise de IA” simulada para fins educacionais.
-    A ideia é aproximar a experiência de um app real de classificação de patologias, mas sem rodar um modelo de verdade. [web:41][web:45][web:54]
-    """
-    # semente semi-determinística baseada na média de pixels
+    """'Análise de IA' simulada para fins educacionais."""
     mean_intensity = float(image_bgr.mean())
     random.seed(int(mean_intensity))
 
@@ -197,12 +182,10 @@ def simulate_ai_analysis(image_bgr: np.ndarray):
         "Alterações degenerativas / regressivas",
     ]
     probs = np.abs(np.random.dirichlet(np.ones(len(labels))))
-    # ordena por probabilidade
     order = np.argsort(probs)[::-1]
     labels_sorted = [labels[i] for i in order]
     probs_sorted = probs[order]
 
-    # gera um “laudo narrativo” curto
     top_label = labels_sorted[0]
     confidence = probs_sorted[0]
 
@@ -291,6 +274,7 @@ def generate_pdf_report(
     pdf.set_font("Arial", "", 11)
     pdf.multi_cell(0, 6, comments or "(sem comentários)")
 
+    # CORREÇÃO FINAL: fpdf2 moderno retorna bytes diretamente
     pdf_bytes = pdf.output()
     return pdf_bytes
 
@@ -418,7 +402,7 @@ with tab2:
     else:
         st.subheader("Estimativa automatizada de contagem de células (didático)")
         st.caption(
-            "Este módulo usa visão computacional simples para estimar o número de ‘células’ na imagem. "
+            "Este módulo usa visão computacional simples para estimar o número de 'células' na imagem. "
             "Os resultados têm finalidade **pedagógica**, não diagnóstica."
         )
 
@@ -438,7 +422,7 @@ with tab2:
         with info_col:
             st.markdown(
                 f"""
-                **Total estimado de ‘células’**: {count_cells}  
+                **Total estimado de 'células'**: {count_cells}  
 
                 Sugestões de uso em sala de aula:  
                 - Comparar a contagem automática com a estimativa visual do aluno.  
@@ -477,8 +461,6 @@ with tab3:
         labels_sorted = probs_sorted = top_label = confidence = narrative = None
 
         if start_scan:
-            import time
-
             # animação: linha percorrendo a lâmina em X e depois em Y
             n_steps_x = 25
             n_steps_y = 25
@@ -499,7 +481,7 @@ with tab3:
                 scan_placeholder.image(to_pil(frame), use_column_width=True)
                 time.sleep(0.03)
 
-            # faz a “inferência” após a animação
+            # faz a "inferência" após a animação
             labels_sorted, probs_sorted, top_label, confidence, narrative = simulate_ai_analysis(
                 scan_base
             )
@@ -512,7 +494,7 @@ with tab3:
             # estado inicial: apenas imagem sem scanner
             scan_placeholder.image(to_pil(scan_base), use_column_width=True)
 
-        # se já temos resultado (apos clicar no botão)
+        # se já temos resultado (após clicar no botão)
         if labels_sorted is not None:
             ai_summary_for_pdf = (
                 f"Classe mais provável: {top_label} (confiança aproximada: {confidence*100:.1f}%). "
@@ -562,4 +544,3 @@ with tab3:
                     file_name=f"relatorio_patologia_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                     mime="application/pdf",
                 )
-
