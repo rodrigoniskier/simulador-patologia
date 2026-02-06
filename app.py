@@ -10,7 +10,6 @@ from PIL import Image
 from fpdf import FPDF
 import streamlit as st
 
-
 # ---------------------- CONFIGURAÇÃO DA PÁGINA ----------------------
 st.set_page_config(
     page_title="Simulador de Patologia Digital",
@@ -18,7 +17,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded",
 )
-
 
 # ---------------------- ESTILOS GERAIS ----------------------
 CUSTOM_CSS = """
@@ -274,9 +272,22 @@ def generate_pdf_report(
     pdf.set_font("Arial", "", 11)
     pdf.multi_cell(0, 6, comments or "(sem comentários)")
 
-    # FPDF original: usa dest='S' para string, depois encode para bytes
-    pdf_bytes = pdf.output(dest='S').encode('latin1')
-    return pdf_bytes
+    # ---------------------- CORREÇÃO AQUI ----------------------
+    # O método output pode retornar string (versões antigas) ou bytes (versões novas).
+    # Esta verificação garante compatibilidade e evita o AttributeError.
+    
+    # Tenta obter a saída com dest='S' (padrão antigo que às vezes retorna bytes no novo)
+    try:
+        val = pdf.output(dest='S')
+    except TypeError:
+         # Fallback para FPDF2 puro se dest='S' não for suportado
+        val = pdf.output()
+
+    # Se o resultado for string, codifica. Se for bytes, usa direto.
+    if isinstance(val, str):
+        return val.encode('latin1')
+    
+    return bytes(val)
 
 
 # ---------------------- LAYOUT PRINCIPAL ----------------------
