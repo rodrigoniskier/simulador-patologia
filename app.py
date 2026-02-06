@@ -455,21 +455,78 @@ with tab3:
     else:
         st.subheader("Análise de IA (simulada) e relatório do aluno")
 
-        # IA simulada
-        labels_sorted, probs_sorted, top_label, confidence, narrative = simulate_ai_analysis(zoomed)
-        ai_summary_for_pdf = (
-            f"Classe mais provável: {top_label} (confiança aproximada: {confidence*100:.1f}%). "
-            f"Resumo: {narrative}"
-        )
+        # mostra novamente a lâmina (estado atual: zoom + grade + (des)identificação)
+        st.markdown("### Campo de visão para análise de IA")
+        img_col, info_col = st.columns([3, 2])
 
-        st.markdown(
-            "> Esta IA é **simulada**, construída apenas para fins didáticos, sem uso real em diagnóstico."
-        )
-        st.markdown("### Saída simulada do modelo")
-        for label, prob in zip(labels_sorted, probs_sorted):
-            st.write(f"- {label}: {prob*100:.1f}%")
+        # placeholder para animação
+        scan_placeholder = img_col.empty()
 
-        st.info(narrative)
+        # imagem base para animação do scanner
+        scan_base = zoomed.copy()
+        h, w, _ = scan_base.shape
+
+        with info_col:
+            st.markdown(
+                "> Clique em **Gerar análise de IA** para simular o algoritmo percorrendo a lâmina.\n"
+                "> A animação representa um scanner X‑Y varrendo o campo de visão."
+            )
+            start_scan = st.button("▶️ Gerar análise de IA (simulada)")
+
+        ai_summary_for_pdf = None  # garante reset local
+        labels_sorted = probs_sorted = top_label = confidence = narrative = None
+
+        if start_scan:
+            import time
+
+            # animação: linha percorrendo a lâmina em X e depois em Y
+            n_steps_x = 25
+            n_steps_y = 25
+
+            # varredura horizontal (eixo X)
+            for i in range(n_steps_x):
+                frame = scan_base.copy()
+                x_pos = int(w * (i / (n_steps_x - 1)))
+                cv2.line(frame, (x_pos, 0), (x_pos, h), (0, 255, 0), 2)
+                scan_placeholder.image(to_pil(frame), use_column_width=True)
+                time.sleep(0.03)
+
+            # varredura vertical (eixo Y)
+            for j in range(n_steps_y):
+                frame = scan_base.copy()
+                y_pos = int(h * (j / (n_steps_y - 1)))
+                cv2.line(frame, (0, y_pos), (w, y_pos), (0, 255, 0), 2)
+                scan_placeholder.image(to_pil(frame), use_column_width=True)
+                time.sleep(0.03)
+
+            # faz a “inferência” após a animação
+            labels_sorted, probs_sorted, top_label, confidence, narrative = simulate_ai_analysis(
+                scan_base
+            )
+
+            # mostra imagem final sem linha, como resultado
+            scan_placeholder.image(to_pil(scan_base), use_column_width=True)
+
+            st.success("Análise de IA simulada concluída.")
+        else:
+            # estado inicial: apenas imagem sem scanner
+            scan_placeholder.image(to_pil(scan_base), use_column_width=True)
+
+        # se já temos resultado (apos clicar no botão)
+        if labels_sorted is not None:
+            ai_summary_for_pdf = (
+                f"Classe mais provável: {top_label} (confiança aproximada: {confidence*100:.1f}%). "
+                f"Resumo: {narrative}"
+            )
+
+            st.markdown(
+                "> Esta IA é **simulada**, construída apenas para fins didáticos, sem uso real em diagnóstico."
+            )
+            st.markdown("### Saída simulada do modelo")
+            for label, prob in zip(labels_sorted, probs_sorted):
+                st.write(f"- {label}: {prob*100:.1f}%")
+
+            st.info(narrative)
 
         st.markdown("---")
         st.markdown("### Raciocínio diagnóstico do aluno")
@@ -494,8 +551,8 @@ with tab3:
                     student_name=student_name or "Aluno não identificado",
                     case_id=case_id or "Caso sem identificação",
                     comments=comments,
-                    ai_summary=ai_summary_for_pdf if include_ai else None,
-                    cell_count=cell_count_for_pdf if include_count else None,
+                    ai_summary=ai_summary_for_pdf if (include_ai and ai_summary_for_pdf) else None,
+                    cell_count=cell_count_for_pdf if (include_count and cell_count_for_pdf is not None) else None,
                 )
 
                 st.success("PDF gerado com sucesso. Faça o download abaixo.")
@@ -505,3 +562,4 @@ with tab3:
                     file_name=f"relatorio_patologia_{datetime.now().strftime('%Y%m%d_%H%M')}.pdf",
                     mime="application/pdf",
                 )
+
