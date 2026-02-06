@@ -272,26 +272,23 @@ def generate_pdf_report(
     pdf.set_font("Arial", "", 11)
     pdf.multi_cell(0, 6, comments or "(sem comentários)")
 
-    # ---------------------- CORREÇÃO AQUI ----------------------
-    # O método output pode retornar string (versões antigas) ou bytes (versões novas).
-    # Esta verificação garante compatibilidade e evita o AttributeError.
-    
-    # Tenta obter a saída com dest='S' (padrão antigo que às vezes retorna bytes no novo)
+    # Corrige a saída do FPDF (compatibilidade bytes/string)
     try:
         val = pdf.output(dest='S')
     except TypeError:
-         # Fallback para FPDF2 puro se dest='S' não for suportado
         val = pdf.output()
 
-    # Se o resultado for string, codifica. Se for bytes, usa direto.
     if isinstance(val, str):
         return val.encode('latin1')
-    
     return bytes(val)
 
 
 # ---------------------- LAYOUT PRINCIPAL ----------------------
 st.title("🧫 Simulador de Análise Patológica")
+
+# ADIÇÃO DO CRÉDITO
+st.markdown("**Desenvolvido por Prof. Rodrigo Niskier**")
+
 st.markdown(
     "Simulador interativo de **patologia** digital para treinamento em leitura de lâminas, "
     "contagem de células e letramento digital (incluindo IA simulada)."
