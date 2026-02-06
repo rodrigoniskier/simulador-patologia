@@ -274,8 +274,8 @@ def generate_pdf_report(
     pdf.set_font("Arial", "", 11)
     pdf.multi_cell(0, 6, comments or "(sem comentários)")
 
-    # CORREÇÃO FINAL: fpdf2 moderno retorna bytes diretamente
-    pdf_bytes = pdf.output()
+    # FPDF original: usa dest='S' para string, depois encode para bytes
+    pdf_bytes = pdf.output(dest='S').encode('latin1')
     return pdf_bytes
 
 
