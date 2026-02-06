@@ -10,6 +10,72 @@ from PIL import Image
 from fpdf import FPDF
 import streamlit as st
 
+# ---------------------- DADOS E CENÁRIOS PEDAGÓGICOS ----------------------
+# Aqui definimos os textos técnicos detalhados para cada cenário solicitado.
+PATHOLOGY_SCENARIOS = {
+    "Modo Livre (Aleatório)": None,
+    "Músculo Cardíaco": {
+        "diagnosis": "Hipertrofia Miocárdica",
+        "description": (
+            "A análise histopatológica revela aumento significativo do diâmetro transversal dos cardiomiócitos "
+            "(hipertrofia), sem evidência de aumento numérico das células (hiperplasia). Observam-se núcleos "
+            "aumentados de volume, por vezes hipercromáticos e com formas retangulares ('em vagão de trem' "
+            "ou boxcar nuclei). O citoplasma apresenta-se abundante e eosinofílico. Há preservação da arquitetura "
+            "fascicular, podendo haver leve fibrose intersticial secundária dependendo da cronicidade."
+        )
+    },
+    "Epitélio Prostático": {
+        "diagnosis": "Hiperplasia Prostática Benigna (HPB)",
+        "description": (
+            "Cortes evidenciam proliferação nodular de elementos estromais e glandulares. As glândulas apresentam "
+            "arquitetura variada, algumas císticas e dilatadas, revestidas por dupla camada celular: uma camada "
+            "basal de células cuboides/achatadas e uma camada luminal de células cilíndricas secretoras. "
+            "Observam-se projeções papilares intra-luminais. O estroma fibromuscular exibe hipercelularidade. "
+            "Ausência de atipias nucleares significativas ou invasão estromal que sugerissem malignidade."
+        )
+    },
+    "Epitélio Brônquico": {
+        "diagnosis": "Metaplasia Escamosa",
+        "description": (
+            "Observa-se substituição do epitélio respiratório normal (pseudoestratificado cilíndrico ciliado) "
+            "por epitélio escamoso estratificado maduro. Nota-se perda dos cílios e das células caliciformes "
+            "na área afetada. As células escamosas apresentam diferenciação regular, sem atipias ou disqueratose "
+            "significativas neste corte. O processo representa uma resposta adaptativa reversível a irritantes crônicos "
+            "(ex.: tabagismo), conferindo maior resistência mecânica em detrimento da função mucociliar."
+        )
+    },
+    "Tecido Nervoso": {
+        "diagnosis": "Atrofia Encefálica / Alterações Neurodegenerativas",
+        "description": (
+            "O tecido exibe redução da densidade neuronal, com neurônios remanescentes apresentando retração "
+            "do corpo celular (encolhimento) e picnose nuclear. Observa-se gliose reacional (proliferação de "
+            "astrócitos e micróglias) substituindo o neurópilo perdido. Pode haver dilatação dos espaços "
+            "perivasculares (Virchow-Robin). Tais achados correlacionam-se macroscopicamente com o estreitamento "
+            "dos giros e alargamento dos sulcos, compatíveis com processo atrófico cerebral."
+        )
+    },
+    "Epitélio Renal": {
+        "diagnosis": "Degeneração Hidrópica (Tumefação Turva)",
+        "description": (
+            "Os túbulos renais proximais exibem células aumentadas de volume devido ao acúmulo intracelular de "
+            "água. O citoplasma apresenta-se pálido, vacuolizado e finamente granular, deslocando o núcleo "
+            "centralmente, embora este permaneça viável. A luz tubular encontra-se reduzida ou ocluída pela "
+            "protrusão celular. Trata-se de uma lesão celular reversível decorrente de falha nas bombas iônicas "
+            "de membrana (hipóxia ou tóxicos)."
+        )
+    },
+    "Tecido Hepático": {
+        "diagnosis": "Esteatose Hepática (Degeneração Gordurosa)",
+        "description": (
+            "Parênquima hepático exibindo acúmulo de vacúolos lipídicos no citoplasma dos hepatócitos. "
+            "Predomínio de esteatose macrovesicular, onde uma única grande gota de gordura desloca e comprime "
+            "o núcleo para a periferia da célula (aspecto em 'anel de sinete'). Em menores áreas, pode haver "
+            "esteatose microvesicular (múltiplos pequenos vacúolos sem deslocamento nuclear). Inflamação "
+            "lobular é escassa ou ausente neste campo."
+        )
+    }
+}
+
 # ---------------------- CONFIGURAÇÃO DA PÁGINA ----------------------
 st.set_page_config(
     page_title="Simulador de Patologia Digital",
@@ -167,51 +233,70 @@ def simple_cell_count(image_bgr: np.ndarray, min_area: int = 30, max_area: int =
     return annotated, count
 
 
-def simulate_ai_analysis(image_bgr: np.ndarray):
-    """'Análise de IA' simulada para fins educacionais."""
-    mean_intensity = float(image_bgr.mean())
-    random.seed(int(mean_intensity))
-
-    labels = [
-        "Padrão inflamatório crônico",
-        "Padrão inflamatório agudo",
-        "Padrão neoplásico",
-        "Tecido essencialmente normal",
-        "Alterações degenerativas / regressivas",
-    ]
-    probs = np.abs(np.random.dirichlet(np.ones(len(labels))))
-    order = np.argsort(probs)[::-1]
-    labels_sorted = [labels[i] for i in order]
-    probs_sorted = probs[order]
-
-    top_label = labels_sorted[0]
-    confidence = probs_sorted[0]
-
-    if "neoplásico" in top_label:
-        narrative = (
-            "O algoritmo sugere padrão neoplásico, priorizando a correlação com achados clínicos "
-            "e confirmação por imuno-histoquímica sempre que indicado."
-        )
-    elif "inflamatório crônico" in top_label:
-        narrative = (
-            "O algoritmo indica predomínio de inflamação crônica, com possível formação de "
-            "tecido de granulação ou fibrose residual."
-        )
-    elif "inflamatório agudo" in top_label:
-        narrative = (
-            "O algoritmo indica padrão inflamatório agudo, compatível com processo exsudativo "
-            "rico em neutrófilos."
-        )
-    elif "normal" in top_label:
-        narrative = (
-            "O algoritmo não identifica alterações significativas, reforçando a necessidade de "
-            "integrar o contexto clínico e outros exames."
-        )
+def simulate_ai_analysis(image_bgr: np.ndarray, selected_scenario: dict = None):
+    """
+    'Análise de IA' simulada.
+    Se um cenário específico for passado (selecionado pelo usuário), força o diagnóstico correto.
+    Caso contrário, gera resultados aleatórios genéricos.
+    """
+    
+    if selected_scenario:
+        # MODO DIRECIONADO: O diagnóstico já está definido pelo input do usuário
+        top_label = selected_scenario["diagnosis"]
+        narrative = selected_scenario["description"]
+        
+        # Gera alta confiança para o diagnóstico correto
+        confidence = random.uniform(0.88, 0.99)
+        
+        # Cria "competidores" falsos com baixa probabilidade para preencher o gráfico
+        distractors = [
+            "Tecido Normal",
+            "Artefato de Técnica",
+            "Inflamação Inespecífica",
+            "Outra Alteração"
+        ]
+        # Remove o label correto se estiver na lista (improvável, mas por segurança)
+        if top_label in distractors:
+            distractors.remove(top_label)
+            
+        # Distribui o restante da probabilidade (1 - confidence) entre os distratores
+        remaining_prob = 1.0 - confidence
+        distractor_probs = np.random.dirichlet(np.ones(len(distractors))) * remaining_prob
+        
+        labels_sorted = [top_label] + distractors
+        probs_sorted = np.concatenate(([confidence], distractor_probs))
+        
     else:
-        narrative = (
-            "O algoritmo sugere alterações degenerativas/regressivas, recomendando avaliação "
-            "complementar para definição etiológica."
-        )
+        # MODO LIVRE (ALEATÓRIO ANTIGO)
+        mean_intensity = float(image_bgr.mean())
+        random.seed(int(mean_intensity))
+
+        labels = [
+            "Padrão inflamatório crônico",
+            "Padrão inflamatório agudo",
+            "Padrão neoplásico",
+            "Tecido essencialmente normal",
+            "Alterações degenerativas / regressivas",
+        ]
+        probs = np.abs(np.random.dirichlet(np.ones(len(labels))))
+        order = np.argsort(probs)[::-1]
+        labels_sorted = [labels[i] for i in order]
+        probs_sorted = probs[order]
+
+        top_label = labels_sorted[0]
+        confidence = probs_sorted[0]
+
+        # Lógica narrativa genérica antiga
+        if "neoplásico" in top_label:
+            narrative = "O algoritmo sugere padrão neoplásico, priorizando a correlação com achados clínicos."
+        elif "inflamatório crônico" in top_label:
+            narrative = "O algoritmo indica predomínio de inflamação crônica e fibrose."
+        elif "inflamatório agudo" in top_label:
+            narrative = "O algoritmo indica padrão inflamatório agudo (exsudativo)."
+        elif "normal" in top_label:
+            narrative = "O algoritmo não identifica alterações significativas."
+        else:
+            narrative = "O algoritmo sugere alterações degenerativas genéricas."
 
     return labels_sorted, probs_sorted, top_label, confidence, narrative
 
@@ -220,6 +305,7 @@ def generate_pdf_report(
     pil_image: Image.Image,
     student_name: str,
     case_id: str,
+    tissue_type: str,
     comments: str,
     ai_summary: str | None = None,
     cell_count: int | None = None,
@@ -231,11 +317,15 @@ def generate_pdf_report(
 
     pdf.set_font("Arial", "B", 14)
     pdf.cell(0, 10, "Simulador de Patologia Digital", ln=True, align="C")
+    
+    pdf.set_font("Arial", "I", 8)
+    pdf.cell(0, 5, "Desenvolvido por Prof. Rodrigo Niskier", ln=True, align="C")
 
     pdf.set_font("Arial", "", 11)
     pdf.ln(4)
     pdf.cell(0, 8, f"Aluno: {student_name}", ln=True)
-    pdf.cell(0, 8, f"Caso: {case_id}", ln=True)
+    pdf.cell(0, 8, f"Caso/Lâmina: {case_id}", ln=True)
+    pdf.cell(0, 8, f"Tecido Analisado: {tissue_type}", ln=True)
     pdf.cell(0, 8, f"Data: {datetime.now().strftime('%d/%m/%Y %H:%M')}", ln=True)
 
     # Resumo de IA e contagem (se disponíveis)
@@ -297,8 +387,17 @@ st.markdown(
 with st.sidebar:
     st.header("Configurações gerais")
     student_name = st.text_input("Nome do aluno", placeholder="Digite seu nome")
-    case_id = st.text_input("Identificação do caso", placeholder="Ex.: Caso 01 - Necrose")
+    case_id = st.text_input("Identificação do caso", placeholder="Ex.: Lâmina 05")
 
+    st.markdown("---")
+    
+    # NOVO SELETOR DE TECIDO
+    st.markdown("**Contexto Histológico**")
+    tissue_option = st.selectbox(
+        "Selecione o tecido da lâmina carregada:",
+        options=list(PATHOLOGY_SCENARIOS.keys())
+    )
+    
     st.markdown("---")
     zoom = st.slider("Zoom aproximado", 1.0, 4.0, 1.5, 0.25)
     show_grid = st.checkbox("Mostrar grade de contagem", value=False)
@@ -319,11 +418,11 @@ with col_a:
     st.markdown(
         """
         <div class="metric-card">
-            <div class="metric-label">Modo</div>
-            <div class="metric-value">Treino individual</div>
-            <div class="metric-sub">Exploração livre + tarefas guiadas</div>
+            <div class="metric-label">Tecido Selecionado</div>
+            <div class="metric-value">{}</div>
+            <div class="metric-sub">Contexto para análise</div>
         </div>
-        """,
+        """.format(tissue_option if tissue_option != "Modo Livre (Aleatório)" else "Modo Livre"),
         unsafe_allow_html=True,
     )
 with col_b:
@@ -332,7 +431,7 @@ with col_b:
         <div class="metric-card">
             <div class="metric-label">Caso ativo</div>
             <div class="metric-value">{case_id or "Não definido"}</div>
-            <div class="metric-sub">Defina um caso na barra lateral</div>
+            <div class="metric-sub">Identificação na sidebar</div>
         </div>
         """,
         unsafe_allow_html=True,
@@ -396,6 +495,10 @@ with tab1:
                 - Ative a **grade** para exercícios de contagem ou estimativa de proporções.  
                 """
             )
+            # Dica contextual baseada na seleção
+            if tissue_option != "Modo Livre (Aleatório)":
+                st.info(f"💡 Dica: Procure por características típicas de **{tissue_option}**.")
+            
             quick_notes = st.text_area(
                 "Observações rápidas (o que chama a sua atenção nesta lâmina?).",
                 height=160,
@@ -463,6 +566,10 @@ with tab3:
                 "> Clique em **Gerar análise de IA** para simular o algoritmo percorrendo a lâmina.\n"
                 "> A animação representa um scanner X‑Y varrendo o campo de visão."
             )
+            
+            if tissue_option != "Modo Livre (Aleatório)":
+                st.success(f"Contexto definido: **{tissue_option}**. A IA buscará padrões específicos.")
+            
             start_scan = st.button("▶️ Gerar análise de IA (simulada)")
 
         ai_summary_for_pdf = None  # garante reset local
@@ -489,9 +596,12 @@ with tab3:
                 scan_placeholder.image(to_pil(frame), use_column_width=True)
                 time.sleep(0.03)
 
+            # Define qual cenário passar (se não for aleatório)
+            scenario_data = PATHOLOGY_SCENARIOS.get(tissue_option)
+
             # faz a "inferência" após a animação
             labels_sorted, probs_sorted, top_label, confidence, narrative = simulate_ai_analysis(
-                scan_base
+                scan_base, selected_scenario=scenario_data
             )
 
             # mostra imagem final sem linha, como resultado
@@ -505,18 +615,18 @@ with tab3:
         # se já temos resultado (após clicar no botão)
         if labels_sorted is not None:
             ai_summary_for_pdf = (
-                f"Classe mais provável: {top_label} (confiança aproximada: {confidence*100:.1f}%). "
-                f"Resumo: {narrative}"
+                f"Diagnóstico sugerido: {top_label} (confiança: {confidence*100:.1f}%). "
+                f"\nAchados: {narrative}"
             )
 
             st.markdown(
                 "> Esta IA é **simulada**, construída apenas para fins didáticos, sem uso real em diagnóstico."
             )
-            st.markdown("### Saída simulada do modelo")
+            st.markdown("### Resultado da Análise Simulada")
             for label, prob in zip(labels_sorted, probs_sorted):
-                st.write(f"- {label}: {prob*100:.1f}%")
+                st.write(f"- **{label}**: {prob*100:.1f}%")
 
-            st.info(narrative)
+            st.info(f"**Descrição Técnica:** {narrative}")
 
         st.markdown("---")
         st.markdown("### Raciocínio diagnóstico do aluno")
@@ -540,6 +650,7 @@ with tab3:
                     pil_image=pil_img,
                     student_name=student_name or "Aluno não identificado",
                     case_id=case_id or "Caso sem identificação",
+                    tissue_type=tissue_option, # Adicionado ao PDF
                     comments=comments,
                     ai_summary=ai_summary_for_pdf if (include_ai and ai_summary_for_pdf) else None,
                     cell_count=cell_count_for_pdf if (include_count and cell_count_for_pdf is not None) else None,
