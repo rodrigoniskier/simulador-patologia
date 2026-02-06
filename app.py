@@ -291,7 +291,7 @@ def generate_pdf_report(
     pdf.set_font("Arial", "", 11)
     pdf.multi_cell(0, 6, comments or "(sem comentários)")
 
-    pdf_bytes = pdf.output(dest="S").encode("latin1")
+    pdf_bytes = pdf.output()
     return pdf_bytes
 
 
